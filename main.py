@@ -1,7 +1,9 @@
 import json
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 import schedule
 from plyer import notification
+from notifications import send_notification
 
 
 class Task:
@@ -10,7 +12,7 @@ class Task:
         self.priority = priority.lower()
         self.due_date = due_date
         self.notes = notes
-1
+
     def to_dict(self):
         return {
             "name": self.name,
@@ -51,7 +53,7 @@ class ToDoList:
 
 def save_tasks(todo_list, filename="tasks.json"):
     with open(filename, "w") as f:
-        json.dump([task.to_dict() for task in todo_list.tasks], f)
+        json.dump([task.to_dict() for task in todo_list.tasks], f, indent=4)
 
 
 def load_tasks(filename="tasks.json"):
@@ -66,26 +68,14 @@ def load_tasks(filename="tasks.json"):
 def is_valid_date(date_str):
     try:
         day, month, year = map(int, date_str.split('-'))
-        if year < 2000 or year > 2100:
-            return False
-        if month < 1 or month > 12:
-            return False
-        if day < 1 or day > 31:
-            return False
+        due_date = datetime(year, month, day)
 
+        if due_date < datetime.now() or due_date > datetime.now() + timedelta(days=365):
+            raise ValueError("Date must be within 1 year from now.")
 
-        if month == 2:
-            if day > 29:
-                return False
-            if day == 29 and not (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)):
-                return False
-
-
-        if month in [4, 6, 9, 11] and day > 30:
-            return False
-        return True
-    except ValueError:
-        return False
+        return due_date.strftime("%Y-%m-%d %H:%M")  # Return formatted date string
+    except (ValueError, IndexError):
+        raise ValueError("Invalid date format. Please use DD-MM-YYYY format.")
 
 
 def check_deadlines(todo_list):
@@ -93,12 +83,10 @@ def check_deadlines(todo_list):
     for task in todo_list.tasks:
         try:
             due_time = datetime.strptime(task.due_date, "%Y-%m-%d %H:%M")
-
             if due_time <= current_time:
-                notification.notify(
-                    title="Task Due",
-                    message=f"Reminder: {task.name} is due now.",
-                    timeout=10
+                send_notification(
+                    "Task Due",
+                    f"Reminder: {task.name} is due now."
                 )
             elif (due_time - current_time).days > 365:
                 print(f"Unrealistic due date for task '{task.name}': {task.due_date}")
@@ -108,10 +96,13 @@ def check_deadlines(todo_list):
 
 
 def main():
+    print(f"Running on: {os.name}")  # Display the OS name
     todo_list = ToDoList()
 
+    # Schedule the deadline check but do not call it automatically
+    schedule.every(1).minutes.do(check_deadlines, todo_list)
+
     while True:
-        schedule.every(1).minutes.do(check_deadlines, todo_list)
         schedule.run_pending()
         print("\nWelcome to To-Do List Manager!")
         print("1. Add a new task")
@@ -120,7 +111,8 @@ def main():
         print("4. View all tasks")
         print("5. View high-priority tasks")
         print("6. View upcoming tasks")
-        print("7. Exit")
+        print("7. Show notifications")
+        print("8. Exit")
 
         choice = input("Please select an option: ")
 
@@ -130,12 +122,12 @@ def main():
             due_date = input("Enter due date (DD-MM-YYYY HH:MM): ")
             notes = input("Enter additional notes (optional): ")
 
-            if is_valid_date(due_date[:10]):
-
-                new_task =Task(name,priority,due_date,notes)
+            try:
+                valid_date = is_valid_date(due_date[:10])
+                new_task = Task(name, priority, valid_date, notes)
                 todo_list.add_task(new_task)
-            else:
-                print("Invalid date entered. Please enter a valid date  in proper format  DD-MM-YYYY format.")
+            except ValueError as e:
+                print(e)
 
         elif choice == "2":
             task_name = input("Enter the task name to edit: ")
@@ -144,12 +136,13 @@ def main():
             due_date = input("Enter new due date (DD-MM-YYYY HH:MM): ")
             notes = input("Enter new notes (optional): ")
 
-            if is_valid_date(due_date[:10]):
-                new_task = Task(name, priority, due_date, notes)
+            try:
+                valid_date = is_valid_date(due_date[:10])
+                new_task = Task(name, priority, valid_date, notes)
                 if not todo_list.edit_task(task_name, new_task):
                     print("Task not found.")
-            else:
-                print("Invalid date entered. Please enter a valid date in DD-MM-YYYY format.")
+            except ValueError as e:
+                print(e)
 
         elif choice == "3":
             task_name = input("Enter the task name to delete: ")
@@ -171,6 +164,17 @@ def main():
                 print(f"Task: {task.name}, Priority: {task.priority}, Due: {task.due_date}, Notes: {task.notes}")
 
         elif choice == "7":
+            # Send notifications for all tasks
+            for task in todo_list.tasks:
+                due_time = datetime.strptime(task.due_date, "%Y-%m-%d %H:%M")
+                if due_time <= datetime.now():
+                    send_notification(
+                        "Task Due",
+                        f"Reminder: {task.name} is due now."
+                    )
+            print("Notifications for due tasks sent.")
+
+        elif choice == "8":
             print("Goodbye!")
             break
 
